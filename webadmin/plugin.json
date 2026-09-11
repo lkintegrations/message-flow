@@ -1,0 +1,8 @@
+{
+    "id": "message-flow",
+    "name": "Message Flow",
+    "version": "1.0.0",
+    "author": "Chris Gibson",
+    "description": "Adds a Message Flow nav tab (channel-to-channel routing map) and a 'View in Message Flow' channel action, running inside the Web Support shell.",
+    "client": { "entry": "web/plugin.js" }
+}
