@@ -15,14 +15,11 @@ import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.tags.Tag;
 
 /**
- * REST surface for Message Flow. Mounted (like Web Support) under
- * /api/extensions/{path}, per plugin.xml's pluginMetaData path="messageFlow".
+ * REST surface for Message Flow, mounted under /api/extensions/messageFlow.
  *
- * Both operations are read-only. The viewer itself is a Web Support nav
- * tab/channel-editor tab (webadmin/web/plugin.js), not served from here --
- * this interface only ever answers JS fetch() calls made from inside the
- * already-authenticated shell (which is what lets it satisfy the engine's
- * /api X-Requested-With requirement in the first place).
+ * Both operations are read-only and both are called by fetch() from inside the
+ * web administrator, which is what satisfies the engine's X-Requested-With
+ * requirement on /api.
  */
 @Path("/extensions/messageFlow")
 @Tag(name = "Extension Services")
@@ -40,7 +37,7 @@ public interface MessageFlowServletInterface extends BaseServletInterface {
     @GET
     @Path("/trace")
     @Produces(MediaType.APPLICATION_JSON)
-    @Operation(summary = "Traces one specific message's actual runtime lineage: ancestors read straight from its own Source Map (sourceChannelId(s)/sourceMessageId(s), which the engine writes on every Channel Writer/router.routeMessage hop), and descendants via a bounded forward scan of the channels this one can route to.")
-    @MirthOperation(name = "getMessageTrace", display = "Get Message Flow message trace", auditable = false)
+    @Operation(summary = "Traces one message's actual runtime lineage: ancestors from its own Source Map, descendants via a bounded forward scan of the channels it can route to.")
+    @MirthOperation(name = "getMessageTrace", display = "Get Message Flow message trace", auditable = true)
     Response getMessageTrace(@QueryParam("channelId") String channelId, @QueryParam("messageId") Long messageId);
 }

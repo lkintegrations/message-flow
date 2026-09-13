@@ -1,0 +1,29 @@
+{
+    "schemaVersion": 1,
+    "id": "message-flow",
+    "name": "Message Flow",
+    "description": "Visualizes how channels route to one another: Channel Writer destinations, router.routeMessage() script calls, and every destination that leaves the engine. Adds a routing map with a nav tab, a channel action and a channel-editor tab, plus a per-message trace showing one message's actual runtime lineage rather than only what is configured.",
+    "type": "plugin",
+    "ui": [
+        "web"
+    ],
+    "version": "2.6.13",
+    "minEngineVersion": "4.6.0",
+    "maxEngineVersion": null,
+    "filename": "message-flow-{version}.zip",
+    "restartRequired": true,
+    "license": "MPL-2.0",
+    "authors": [
+        "Synthesis Health",
+        "Keith Smith"
+    ],
+    "homepage": "https://openintegrationengine.org",
+    "keywords": [
+        "routing",
+        "topology",
+        "channels",
+        "message-trace",
+        "visualization"
+    ],
+    "deprecated": false
+}

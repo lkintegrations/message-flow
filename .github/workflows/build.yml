@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: Copyright 2026 Synthesis Health
+# SPDX-FileCopyrightText: Copyright 2026 Keith Smith
+# SPDX-License-Identifier: MPL-2.0
+
+name: Build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  # OIE distribution supplying the engine jars this plugin builds against.
+  # They are not published to any Maven repository, so they are extracted from
+  # the released distribution rather than resolved or built from source.
+  OIE_TAG: v4.6.0
+  OIE_TARBALL: oie_unix_4_6_0.tar.gz
+  # Must match the pom's mc.version.
+  MC_VERSION: '4.6.0'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      - name: Cache OIE distribution
+        id: oie-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.OIE_TARBALL }}
+          key: oie-dist-${{ env.OIE_TAG }}
+
+      - name: Download OIE distribution
+        if: steps.oie-cache.outputs.cache-hit != 'true'
+        run: curl -fSL -o "$OIE_TARBALL" "https://github.com/OpenIntegrationEngine/engine/releases/download/${OIE_TAG}/${OIE_TARBALL}"
+
+      - name: Install engine jars
+        run: |
+          tar xzf "$OIE_TARBALL"
+          mvn -B -ntp -N -Pengine-dist,install-engine-jars \
+            -Dengine.dir="$GITHUB_WORKSPACE/oie" initialize
+
+      - name: Build and test
+        run: mvn -B -ntp clean package
+
+      # A build that ran no tests is indistinguishable from a passing one in
+      # every log and status check. Dropping the surefire pin, renaming a test
+      # directory or misconfiguring a profile all read as success without this.
+      - name: Fail if the test suite did not run
+        run: |
+          reports=$(find . -path '*/target/surefire-reports/*.xml' | wc -l)
+          echo "surefire report files: $reports"
+          if [ "$reports" -eq 0 ]; then
+            echo "::error::Test suite did not run."
+            exit 1
+          fi
+
+      # Not part of the Maven build: the client has no bundler and adding one
+      # to run seven tests would cost more than it returns. Run explicitly so a
+      # failure is a failed step rather than a silent skip.
+      - name: Test the web administrator escaper
+        run: node --test 'webadmin/test/*.test.mjs'
+
+      - name: Upload the extension
+        uses: actions/upload-artifact@v4
+        with:
+          name: message-flow
+          path: package/target/message-flow-*.zip

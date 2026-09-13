@@ -10,21 +10,14 @@ import com.mirth.connect.model.ExtensionPermission;
 import com.mirth.connect.plugins.ServicePlugin;
 
 /**
- * Server-side lifecycle class for the Message Flow contribution to
- * Web Support.
+ * Server-side lifecycle for Message Flow.
  *
- * This is deliberately much simpler than the earlier standalone version's
- * MessageFlowServicePlugin: that one had to build and deploy its own static
- * WAR to work around the /api layer's CSRF header requirement, because it
- * had nowhere else to put its HTML page. Folded into Web Support, the page
- * doesn't exist server-side at all anymore -- it's webadmin/web/plugin.js,
- * discovered and loaded by Web Support's own getWebPluginPaths()/
- * getWebPluginResource() mechanism (the same one that lets built-in
- * connector/datatype panels contribute UI), and it runs inside the
- * already-authenticated shell using the shell's own platform.api (which
- * already sets X-Requested-With). So there's nothing to deploy here: this
- * class exists only to register the plugin point name and the permission
- * the /topology REST operation requires.
+ * There is nothing to deploy here. The user interface is
+ * webadmin/web/plugin.js, discovered and served by the Web Support plugin's
+ * getWebPluginPaths()/getWebPluginResource(), and it runs inside that already
+ * authenticated shell using the shell's own platform.api. This class exists to
+ * register the plugin point name and the permission the REST operations
+ * require.
  */
 public class MessageFlowServicePlugin implements ServicePlugin {
 
@@ -54,8 +47,8 @@ public class MessageFlowServicePlugin implements ServicePlugin {
             new ExtensionPermission(
                 PLUGIN_POINT,
                 "Message Flow",
-                "View the Message Flow channel routing map (read-only; no channel or message data is modified).",
-                new String[] { "getTopology" },
+                "View the Message Flow channel routing map and trace a message's routing lineage (read-only; no channel or message data is modified).",
+                new String[] { "getTopology", "getMessageTrace" },
                 new String[0]
             )
         };

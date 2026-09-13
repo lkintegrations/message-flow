@@ -1,0 +1,155 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- SPDX-FileCopyrightText: Copyright 2026 Synthesis Health -->
+<!-- SPDX-FileCopyrightText: Copyright 2026 Keith Smith -->
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <artifactId>message-flow</artifactId>
+        <groupId>org.openintegrationengine.plugins</groupId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>message-flow-package</artifactId>
+    <name>Message Flow Package</name>
+
+    <properties>
+        <versionNumber>${project.version}</versionNumber>
+        <!-- The extension directory name. Must stay equal to plugin.xml's
+             path attribute and to MessageFlowServicePlugin.PLUGIN_POINT: the
+             engine keys the extension permission off the plugin point, and the
+             web administrator looks for <extensions>/<path>/webadmin/plugin.json. -->
+        <packageName>messageFlow</packageName>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.openintegrationengine.plugins</groupId>
+            <artifactId>message-flow-shared</artifactId>
+            <version>${revision}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.openintegrationengine.plugins</groupId>
+            <artifactId>message-flow-server</artifactId>
+            <version>${revision}</version>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <plugins>
+            <plugin>
+                <artifactId>maven-resources-plugin</artifactId>
+                <version>3.2.0</version>
+                <executions>
+                    <execution>
+                        <id>copy-resources</id>
+                        <phase>compile</phase>
+                        <goals>
+                            <goal>copy-resources</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/to-be-packed</outputDirectory>
+                            <resources>
+                                <resource>
+                                    <directory>resources</directory>
+                                    <filtering>true</filtering>
+                                </resource>
+                                <!-- plugin.json carries the version, so it is
+                                     filtered. plugin.js is NOT: it is full of
+                                     JavaScript template literals, and filtering
+                                     would eat every ${...} in the file. -->
+                                <resource>
+                                    <directory>../webadmin</directory>
+                                    <includes>
+                                        <include>plugin.json</include>
+                                    </includes>
+                                    <targetPath>webadmin</targetPath>
+                                    <filtering>true</filtering>
+                                </resource>
+                                <resource>
+                                    <directory>../webadmin/web</directory>
+                                    <targetPath>webadmin/web</targetPath>
+                                    <filtering>false</filtering>
+                                </resource>
+                            </resources>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <!-- oie.json is read by the extension store straight from the repo
+                 root, so it cannot be generated from ${revision} the way the
+                 packaged files are. Fail the build when it drifts instead. -->
+            <plugin>
+                <artifactId>maven-antrun-plugin</artifactId>
+                <version>3.1.0</version>
+                <executions>
+                    <execution>
+                        <id>check-oie-json-version</id>
+                        <phase>validate</phase>
+                        <goals><goal>run</goal></goals>
+                        <configuration>
+                            <target>
+                                <loadfile property="oie.json.contents" srcFile="${project.basedir}/../oie.json"/>
+                                <condition property="oie.json.version.ok">
+                                    <contains string="${oie.json.contents}" substring="&quot;version&quot;: &quot;${project.version}&quot;"/>
+                                </condition>
+                                <fail unless="oie.json.version.ok">
+oie.json does not declare version ${project.version}.
+Update oie.json's "version" (and its "filename") to match the pom's revision.
+                                </fail>
+                            </target>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-dependency-plugin</artifactId>
+                <version>3.0.1</version>
+                <executions>
+                    <execution>
+                        <id>copy-dependencies</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>copy-dependencies</goal>
+                        </goals>
+                        <configuration>
+                            <outputDirectory>${project.build.directory}/to-be-packed</outputDirectory>
+                            <includeScope>runtime</includeScope>
+                            <excludeTransitive>true</excludeTransitive>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+
+            <plugin>
+                <artifactId>maven-assembly-plugin</artifactId>
+                <version>3.3.0</version>
+                <executions>
+                    <execution>
+                        <id>package-all</id>
+                        <phase>package</phase>
+                        <goals>
+                            <goal>single</goal>
+                        </goals>
+                        <configuration>
+                            <finalName>message-flow-${versionNumber}</finalName>
+                            <appendAssemblyId>false</appendAssemblyId>
+                            <outputDirectory>${project.build.directory}</outputDirectory>
+                            <descriptors>
+                                <descriptor>assembly.xml</descriptor>
+                            </descriptors>
+                            <attach>true</attach>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+        </plugins>
+    </build>
+</project>

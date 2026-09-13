@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- SPDX-FileCopyrightText: Copyright 2026 Synthesis Health -->
+<!-- SPDX-FileCopyrightText: Copyright 2026 Keith Smith -->
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <artifactId>message-flow</artifactId>
+        <groupId>org.openintegrationengine.plugins</groupId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>message-flow-shared</artifactId>
+    <name>Message Flow Shared</name>
+
+    <properties>
+        <swagger-annotations.version>2.1.9</swagger-annotations.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.swagger.core.v3</groupId>
+            <artifactId>swagger-annotations</artifactId>
+            <version>${swagger-annotations.version}</version>
+            <!-- Supplied by the engine, which generates the API docs. Declared
+                 provided so it is not packaged, matching the other engine
+                 dependencies; copy-dependencies would otherwise have to be
+                 trusted to exclude it. -->
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+</project>

@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- SPDX-FileCopyrightText: Copyright 2026 Synthesis Health -->
+<!-- SPDX-FileCopyrightText: Copyright 2026 Keith Smith -->
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <parent>
+        <artifactId>message-flow</artifactId>
+        <groupId>org.openintegrationengine.plugins</groupId>
+        <version>${revision}</version>
+    </parent>
+
+    <artifactId>message-flow-server</artifactId>
+    <name>Message Flow Server</name>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.openintegrationengine.plugins</groupId>
+            <artifactId>message-flow-shared</artifactId>
+            <version>${revision}</version>
+            <scope>provided</scope>
+        </dependency>
+    </dependencies>
+</project>

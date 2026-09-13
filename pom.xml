@@ -1,0 +1,217 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+
+<!-- SPDX-FileCopyrightText: Copyright 2026 Synthesis Health -->
+<!-- SPDX-FileCopyrightText: Copyright 2026 Keith Smith -->
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+
+<project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+
+    <groupId>org.openintegrationengine.plugins</groupId>
+    <artifactId>message-flow</artifactId>
+    <version>${revision}</version>
+
+    <name>Message Flow</name>
+    <packaging>pom</packaging>
+
+    <properties>
+        <!-- The single version source. Every other version-declaring file
+             derives from this: package/resources/plugin.xml and
+             package/resources/webadmin/plugin.json are filtered from it, and
+             the package module fails the build if oie.json disagrees. -->
+        <revision>2.6.13</revision>
+
+        <plugin.supported.mc.versions>${mc.version}</plugin.supported.mc.versions>
+
+        <mc.version>4.6.0</mc.version>
+        <javax-servlet.version>4.0.1</javax-servlet.version>
+        <javax-rs-api.version>2.0.1</javax-rs-api.version>
+        <jackson.version>2.13.4</jackson.version>
+        <log4j.version>2.17.2</log4j.version>
+        <junit.version>5.10.2</junit.version>
+
+        <!-- JUnit 5 needs surefire 3.x for the JUnit Platform provider. Maven's
+             super-POM binds an older surefire that silently runs zero tests and
+             still reports BUILD SUCCESS, so this pin is load-bearing even though
+             a current Maven makes it a no-op locally. -->
+        <surefire.version>3.2.5</surefire.version>
+
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    </properties>
+
+
+    <!-- The engine jars are not published to any resolvable repository, so they
+         are installed into the local repository from an engine checkout or an
+         unpacked OIE distribution. Two profiles because the two layouts put the
+         jars in different places; pick the one matching what engine.dir points
+         at. Done in Maven rather than a shell script so the same command works
+         on every platform and CI runs exactly what a developer runs. -->
+    <profiles>
+        <profile>
+            <id>engine-checkout</id>
+            <properties>
+                <engine.mirth.server>${engine.dir}/server/setup/server-lib/mirth-server.jar</engine.mirth.server>
+                <engine.mirth.client.core>${engine.dir}/server/setup/server-lib/mirth-client-core.jar</engine.mirth.client.core>
+                <engine.donkey.server>${engine.dir}/donkey/setup/donkey-server.jar</engine.donkey.server>
+            </properties>
+        </profile>
+        <profile>
+            <id>engine-dist</id>
+            <properties>
+                <engine.mirth.server>${engine.dir}/server-lib/mirth-server.jar</engine.mirth.server>
+                <engine.mirth.client.core>${engine.dir}/server-lib/mirth-client-core.jar</engine.mirth.client.core>
+                <engine.donkey.server>${engine.dir}/server-lib/donkey/donkey-server.jar</engine.donkey.server>
+            </properties>
+        </profile>
+        <profile>
+            <!-- Shared by both layouts above; activated by either of them
+                 supplying the paths. Run as:
+                   mvn -Pengine-checkout,install-engine-jars -Dengine.dir=... initialize -->
+            <id>install-engine-jars</id>
+            <build>
+                <plugins>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-install-plugin</artifactId>
+                        <version>3.1.1</version>
+                        <!-- Root project only: the modules do not each need to
+                             install the same three jars. -->
+                        <inherited>false</inherited>
+                        <executions>
+                            <execution>
+                                <id>mirth-server</id>
+                                <phase>initialize</phase>
+                                <goals><goal>install-file</goal></goals>
+                                <configuration>
+                                    <file>${engine.mirth.server}</file>
+                                    <groupId>com.mirth.connect</groupId>
+                                    <artifactId>mirth-server</artifactId>
+                                    <version>${mc.version}</version>
+                                    <packaging>jar</packaging>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>mirth-client-core</id>
+                                <phase>initialize</phase>
+                                <goals><goal>install-file</goal></goals>
+                                <configuration>
+                                    <file>${engine.mirth.client.core}</file>
+                                    <groupId>com.mirth.connect</groupId>
+                                    <artifactId>mirth-client-core</artifactId>
+                                    <version>${mc.version}</version>
+                                    <packaging>jar</packaging>
+                                </configuration>
+                            </execution>
+                            <execution>
+                                <id>donkey-server</id>
+                                <phase>initialize</phase>
+                                <goals><goal>install-file</goal></goals>
+                                <configuration>
+                                    <file>${engine.donkey.server}</file>
+                                    <groupId>com.mirth.connect</groupId>
+                                    <artifactId>donkey-server</artifactId>
+                                    <version>${mc.version}</version>
+                                    <packaging>jar</packaging>
+                                </configuration>
+                            </execution>
+                        </executions>
+                    </plugin>
+                </plugins>
+            </build>
+        </profile>
+    </profiles>
+
+    <organization>
+        <name>Open Integration Engine</name>
+        <url>https://openintegrationengine.org</url>
+    </organization>
+
+
+    <dependencies>
+        <dependency>
+            <groupId>com.mirth.connect</groupId>
+            <artifactId>mirth-server</artifactId>
+            <version>${mc.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.mirth.connect</groupId>
+            <artifactId>mirth-client-core</artifactId>
+            <version>${mc.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.mirth.connect</groupId>
+            <artifactId>donkey-server</artifactId>
+            <version>${mc.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>javax.servlet</groupId>
+            <artifactId>javax.servlet-api</artifactId>
+            <version>${javax-servlet.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>javax.ws.rs</groupId>
+            <artifactId>javax.ws.rs-api</artifactId>
+            <version>${javax-rs-api.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.apache.logging.log4j</groupId>
+            <artifactId>log4j-api</artifactId>
+            <version>${log4j.version}</version>
+            <scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <modules>
+        <module>shared</module>
+        <module>server</module>
+        <module>package</module>
+    </modules>
+
+    <build>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-compiler-plugin</artifactId>
+                <version>3.7.0</version>
+                <configuration>
+                    <release>17</release>
+                </configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire.version}</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-jar-plugin</artifactId>
+                <version>3.0.2</version>
+                <configuration>
+                    <archive>
+                        <manifestEntries>
+                            <Application-Name>Message Flow</Application-Name>
+                            <url>${project.organization.url}</url>
+                        </manifestEntries>
+                    </archive>
+                </configuration>
+            </plugin>
+        </plugins>
+    </build>
+</project>

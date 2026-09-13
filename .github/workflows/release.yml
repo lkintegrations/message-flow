@@ -1,0 +1,102 @@
+# SPDX-FileCopyrightText: Copyright 2026 Synthesis Health
+# SPDX-FileCopyrightText: Copyright 2026 Keith Smith
+# SPDX-License-Identifier: MPL-2.0
+#
+# Releases are cut from a pushed v* tag, never from a branch push: a release
+# job gated on branch pushes re-fires on every merge and silently overwrites a
+# published release's assets. The release is left as a DRAFT for a human to
+# review and publish.
+
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+env:
+  OIE_TAG: v4.6.0
+  OIE_TARBALL: oie_unix_4_6_0.tar.gz
+  MC_VERSION: '4.6.0'
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: maven
+
+      # Chains the three places a version appears: this checks the tag against
+      # oie.json, and the package module's own check ties oie.json to the pom's
+      # <revision>. Nothing overrides the pom at build time, so what CI releases
+      # is what a developer building locally gets.
+      - name: Resolve and verify version
+        id: ver
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          MANIFEST_VERSION="$(jq -r .version oie.json)"; MANIFEST_VERSION="${MANIFEST_VERSION#v}"
+          if [ "$VERSION" != "$MANIFEST_VERSION" ]; then
+            echo "::error::Tag ${GITHUB_REF_NAME} implies version $VERSION but oie.json says $MANIFEST_VERSION"
+            exit 1
+          fi
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Cache OIE distribution
+        id: oie-cache
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.OIE_TARBALL }}
+          key: oie-dist-${{ env.OIE_TAG }}
+
+      - name: Download OIE distribution
+        if: steps.oie-cache.outputs.cache-hit != 'true'
+        run: curl -fSL -o "$OIE_TARBALL" "https://github.com/OpenIntegrationEngine/engine/releases/download/${OIE_TAG}/${OIE_TARBALL}"
+
+      - name: Install engine jars
+        run: |
+          tar xzf "$OIE_TARBALL"
+          mvn -B -ntp -N -Pengine-dist,install-engine-jars \
+            -Dengine.dir="$GITHUB_WORKSPACE/oie" initialize
+
+      # Tests run here too. Skipping them on the one build that ships is the
+      # wrong trade when the suite takes under a second.
+      - name: Build extension
+        run: mvn -B -ntp clean package
+
+      - name: Test the web administrator escaper
+        run: node --test 'webadmin/test/*.test.mjs'
+
+      - name: Fail if the test suite did not run
+        run: |
+          reports=$(find . -path '*/target/surefire-reports/*.xml' | wc -l)
+          if [ "$reports" -eq 0 ]; then
+            echo "::error::Test suite did not run."
+            exit 1
+          fi
+
+      - name: Stage the release asset and checksum
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          mkdir -p dist
+          cp "package/target/message-flow-${VERSION}.zip" dist/
+          cd dist
+          sha256sum "message-flow-${VERSION}.zip" > "message-flow-${VERSION}.zip.sha256"
+
+      - name: Create DRAFT release with assets
+        uses: softprops/action-gh-release@v2
+        with:
+          draft: true
+          name: "Message Flow ${{ steps.ver.outputs.version }}"
+          files: |
+            dist/message-flow-${{ steps.ver.outputs.version }}.zip
+            dist/message-flow-${{ steps.ver.outputs.version }}.zip.sha256

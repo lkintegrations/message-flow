@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<!-- SPDX-FileCopyrightText: Copyright 2026 Synthesis Health -->
+<!-- SPDX-FileCopyrightText: Copyright 2026 Keith Smith -->
+<!-- SPDX-License-Identifier: MPL-2.0 -->
+
+<pluginMetaData path="messageFlow">
+	<name>Message Flow</name>
+	<author>Synthesis Health, Keith Smith</author>
+	<pluginVersion>${project.version}</pluginVersion>
+	<mirthVersion>${plugin.supported.mc.versions}</mirthVersion>
+	<url>https://openintegrationengine.org</url>
+	<description>Visualizes how channels route to one another: Channel Writer destinations, router.routeMessage()/routeMessageByChannelId() script calls, and every destination that leaves the engine. Adds a Message Flow nav tab, a "View in Message Flow" channel action, and a Message Flow tab in the channel editor, plus a per-message trace showing one message's actual runtime lineage. Requires the Web Support plugin, which hosts the web administrator this UI runs inside.</description>
+
+	<serverClasses>
+		<string>org.openintegrationengine.plugins.messageflow.MessageFlowServicePlugin</string>
+	</serverClasses>
+
+	<library type="SHARED" path="message-flow-shared-${project.version}.jar" />
+	<library type="SERVER" path="message-flow-server-${project.version}.jar" />
+
+	<apiProvider type="SERVLET_INTERFACE" name="org.openintegrationengine.plugins.messageflow.MessageFlowServletInterface"/>
+	<apiProvider type="SERVER_CLASS" name="org.openintegrationengine.plugins.messageflow.MessageFlowServlet"/>
+</pluginMetaData>
