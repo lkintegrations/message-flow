@@ -357,6 +357,14 @@ public class MessageFlowServlet extends MirthServlet implements MessageFlowServl
 
                 Map<String, Object> hit = summarizeFetched(candidateChannelId, candidateMessageId, idToName, candidate);
                 hit.put("hop", depth + 1);
+                // The node this specific message actually came from -- channelId/
+                // messageId are this method's own parameters, i.e. the parent
+                // being expanded in this recursive call. Without this, every
+                // branch at the same hop is indistinguishable from a single
+                // chain in list order, which is what the Message Flow client
+                // used to (wrongly) assume.
+                hit.put("parentChannelId", channelId);
+                hit.put("parentMessageId", messageId);
                 out.add(hit);
 
                 traceDescendants(candidateChannelId, candidateMessageId, candidate.getReceivedDate(),

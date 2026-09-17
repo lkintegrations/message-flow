@@ -252,7 +252,7 @@ Install the zip from the Extensions page and restart the engine.
 
 | | |
 |---|---|
-| Plugin version | 2.6.13 |
+| Plugin version | 1.0.1 |
 | Minimum engine version | 4.6.0 |
 | Requires | Web Support, OIE Source Code Search |
 | Restart required | Yes |
