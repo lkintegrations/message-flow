@@ -90,9 +90,10 @@ will fail appears once in each table, with everything it is listed for beside it
 
 ## Tracing one message
 
-Select a channel, paste a message ID, and see where that message went. Not the
-routes it might have taken. The chain is drawn like the map, and every channel in
-it opens that channel or its editor.
+Right-click a message in the Messages view and choose **Trace in Message Flow**,
+or select a channel in Message Flow, paste a message ID, and see where that
+message went. Not the routes it might have taken. The chain is drawn like the
+map, and every channel in it opens that channel or its editor.
 
 Ancestors come from the message's own source map: exact, one lookup. Descendants
 need a bounded forward scan, because the engine has no index for "which message
@@ -178,13 +179,17 @@ different action.
 **View in Message Flow**, on a channel's right-click menu in the Channels view,
 which opens the tab with that channel selected.
 
-There is no entry on the Messages grid. The web administrator exposes no
-message-scoped extension point, so tracing a message means copying its ID across.
+**Trace in Message Flow**, on a message row's right-click menu in the Messages
+view, and in the Message Tasks pane for the selected row. It opens Message Flow
+with the channel and message ID filled in and the trace already run. This needs
+Web Support 1.2.x or later. On an older Web Support the item is not added and the
+rest of the plugin works as before.
+
+Older Web Support has no message-scoped extension point.
 [`messageflow-trace.user.js`](messageflow-trace.user.js) is a userscript that
-works around this from outside the plugin system. It adds a right-click item on a
-message row that opens the trace with the channel and message ID filled in. It
-reads the page directly, so it is a workaround, not a feature. It lives here so
-it can be found.
+adds the same right-click item from outside the plugin system. It reads the page
+directly, so it is a workaround, and it is only needed on Web Support older than
+1.2.
 
 ## Permissions
 
@@ -197,7 +202,9 @@ and becomes live with the Role Based Access Control plugin installed.
 
 ## Requirements
 
-**OIE Source Code Search** and **Web Support**, both installed and enabled.
+**Web Support**, installed and enabled. Version 1.2.x or later is needed for the
+message right-click action. **OIE Source Code Search** is optional but
+recommended.
 
 Source Code Search makes script routing legible. Channel configuration records
 that a route call exists and what literal it matched. It does not record where in
@@ -229,6 +236,9 @@ mvn clean package
 Use `-Pengine-dist` for an unpacked distribution. The extension lands at
 `package/target/message-flow-<version>.zip`.
 
+Point `-Dengine.dir` at an OIE 4.7.0 engine. The plugin compiles against 4.7.0
+and declares support for 4.6.0 and 4.7.0.
+
 The client suite is a separate step, as it is in CI:
 
 ```
@@ -248,13 +258,21 @@ Install the zip from the Extensions page and restart the engine.
 | [Design notes](docs/design-notes.md) | Why the code is shaped this way, what was tried and rejected, and what the tests do not cover |
 | [Releasing](RELEASING.md) | Cutting a release |
 
+## Acknowledgements
+
+Thanks to [@gibson9583](https://github.com/gibson9583) for the Web Support plugin
+this runs inside, and to [@pacmano1](https://github.com/pacmano1) for the support
+and work around Open Integration Engine.
+
 ## Version
 
 | | |
 |---|---|
-| Plugin version | 1.0.1 |
+| Plugin version | 1.0.0 |
 | Minimum engine version | 4.6.0 |
-| Requires | Web Support, OIE Source Code Search |
+| Supported engine versions | 4.6.0, 4.7.0 |
+| Requires | Web Support (1.2.x or later for the message right-click) |
+| Optional | OIE Source Code Search |
 | Restart required | Yes |
 | License | MPL-2.0 |
 
