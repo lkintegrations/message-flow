@@ -245,10 +245,15 @@ function computeFocus(selectedId, edges, hops) {
   const nodeIds = new Set(Object.keys(levelOf));
   const relevantEdges = edges.filter((e) => nodeIds.has(e.fromId) && nodeIds.has(e.toId));
   // Whether widening would actually show anything, so the control can say so.
+  // Only the nodes sitting at the current outer edge of the walk can lead
+  // anywhere new, and only by continuing in the direction that got them here:
+  // an upstream node's own downstream siblings (or a downstream node's own
+  // other parents) never lead back to the selected channel, so they must not
+  // be counted just because they touch a node already in view.
   const beyond = new Set();
-  edges.forEach((e) => {
-    if (nodeIds.has(e.fromId) && !nodeIds.has(e.toId)) beyond.add(e.toId);
-    if (nodeIds.has(e.toId) && !nodeIds.has(e.fromId)) beyond.add(e.fromId);
+  Object.entries(levelOf).forEach(([id, lvl]) => {
+    if (lvl === maxHops) (downstreamAdj[id] || []).forEach((next) => { if (!nodeIds.has(next)) beyond.add(next); });
+    if (lvl === -maxHops) (upstreamAdj[id] || []).forEach((next) => { if (!nodeIds.has(next)) beyond.add(next); });
   });
   return { levelOf, nodeIds, relevantEdges, beyond: beyond.size };
 }
