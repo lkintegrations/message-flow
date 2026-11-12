@@ -6,12 +6,14 @@
 // platform.api, which attaches the X-Requested-With header the engine's /api
 // layer requires.
 //
-// Two entry points, since the platform exposes no message-scoped extension
-// point (see docs/design-notes.md):
+// Entry points (Web Support 1.2.x added registerMessageAction; older hosts
+// have none, so it is feature-detected):
 //   1. registerNavItem + registerView  -- a Message Flow tab under Monitor,
 //      with its own channel list and the message trace box.
 //   2. registerChannelAction           -- "View in Message Flow" on a channel's
 //      right-click menu, jumping to (1) with that channel selected.
+//   3. registerMessageAction           -- "Trace in Message Flow" on a message
+//      row's right-click menu, jumping to (1) with the trace already run.
 
 import { platform } from "@oie/web-shell";
 
@@ -1486,281 +1488,72 @@ const MAX_RENDERED_HOPS = 21;
    for the same route so the two diagrams agree. A reader who has just looked at
    the map above should not have to work out that these are the same thing. */
 const HOP_STYLE = {
-  disabled: { stroke: "var(--text-faint)", dash: 'stroke-dasharray="4,3"', marker: "mfArrowDisabled" },
-  untraceable: { stroke: "var(--warn)", dash: 'stroke-dasharray="6,3"', marker: "mfArrowUntraced" },
-  runtime: { stroke: "var(--violet)", dash: 'stroke-dasharray="2,3"', marker: "mfArrowWriter" },
+  disabled: { stroke: "var(--text-faint)", dash: 'stroke-dasharray="4,3"' },
+  untraceable: { stroke: "var(--warn)", dash: 'stroke-dasharray="6,3"' },
+  runtime: { stroke: "var(--violet)", dash: 'stroke-dasharray="2,3"' },
 };
 
-/** What a chain node says about itself under its name. */
-function subtitleFor(n) {
-  if (n.unconfirmed) return n.subtitleText || "not confirmed";
-  if (n.restricted) return "not visible to you";
-  if (n.notFound) return "not found";
-  if (n.lookupError) return "lookup failed";
-  return `#${n.messageId} \u00b7 ${n.status || "\u2014"}`;
-}
-
-/* ══════════════ Trace graph: reconstructing branches and merges ══════════
-   A trace is not a chain. One message can fan out to several real
-   destinations (a Channel Writer with two enabled routes sends two separate
-   downstream messages), and separate branches can converge back onto the
-   same target -- usually an external endpoint, since two different channels
-   can each write to the same place. Ancestors stay a single line on
-   purpose: a message has exactly one lineage backward in Mirth's model,
-   so there is nothing to branch on that side.
-
-   This reconstructs the real tree from parentChannelId/parentMessageId on
-   each descendant (added server-side alongside this change -- see the
-   accompanying MessageFlowServlet patch). If an older server is still
-   deployed and that field is absent, this falls back to the previous
-   flattened order and says so, rather than drawing something confidently
-   wrong. */
-
-function nodeKey(channelId, messageId) { return `${channelId}::${messageId}`; }
-
-/** Why a specific branch's trail stops, asked of the channel it actually
-    ended at. Returns null when there is simply nothing recorded yet -- not
-    every dead end has a documented cause. */
-function computeContinuation(endNode, mfData, codeIndex, transportById) {
-  const endId = endNode.channelId;
-  const endName = endNode.channelName || endId;
-  const dynamicAtEnd = unresolvableRoutes(codeIndex, endId);
-  const writerDynamicAtEnd = (mfData.externalDestinations || [])
-    .filter((d) => d.dynamicRouting && d.channelId === endId);
-  const untraceableAtEnd = mfData.edges.filter((e) => e.fromId === endId && e.traceable === false);
-  const onwardAtEnd = mfData.edges.filter((e) => e.fromId === endId);
-  const disabledAtEnd = onwardAtEnd.filter((e) => e.enabled === false);
-  const allOnwardDisabled = onwardAtEnd.length > 0
-    && disabledAtEnd.length === onwardAtEnd.length
-    && !dynamicAtEnd.length && !writerDynamicAtEnd.length;
-
-  if (allOnwardDisabled) {
-    /* Keyed by what the routes actually point at, not by the branch they
-       left from -- two different branches disabled on the way to the same
-       destination are one dead end, not two, and should draw as one node. */
-    const targetIds = disabledAtEnd.map((e) => e.toId || e.destName || "?").sort();
-    const singular = disabledAtEnd.length === 1;
-    return {
-      channelName: singular ? (disabledAtEnd[0].toName || disabledAtEnd[0].destName || "1 destination") : `${disabledAtEnd.length} destinations`,
-      targetKey: `disabled:${targetIds.join("|")}`,
-      hopKind: "disabled", subtitleText: "route disabled",
-      sourceTransport: singular ? transportById[disabledAtEnd[0].toId] : undefined,
-      reason: `The trail ends at ${endName}: ${disabledAtEnd.length === 1 ? "its only route onward is" : disabledAtEnd.length === 2 ? "both of its routes onward are" : `all ${disabledAtEnd.length} of its routes onward are`} disabled (${disabledAtEnd.map((e) => `${e.destinationId != null ? `Destination ${e.destinationId}: ` : ""}${e.destName} \u2192 ${routeTargetLabel(e)}`).join("; ")}). Nothing was dispatched from it, so there is no downstream message for a trace to find. This reads the channel as it is configured now, not as it was when the message ran.`,
-    };
-  }
-  if (untraceableAtEnd.length) {
-    const targetIds = untraceableAtEnd.map((e) => e.toId || e.destName || "?").sort();
-    const targets = untraceableAtEnd.map(routeTargetLabel);
-    const singular = untraceableAtEnd.length === 1;
-    return {
-      channelName: singular ? targets[0] : `${untraceableAtEnd.length} channels`,
-      targetKey: `untraceable:${targetIds.join("|")}`,
-      hopKind: "untraceable",
-      sourceTransport: singular ? transportById[untraceableAtEnd[0].toId] : undefined,
-      reason: `The trail ends at ${endName}: it routes to ${targets.join(", ")} with router.routeMessage, which does not send the source map to the downstream channel. Nothing there records that it came from this message, so the routing map knows the hop exists but no trace can confirm this message took it. Import the Route with Sources code template library and call routeMessage(...) without the router. prefix to close the gap.`,
-    };
-  }
-  if (dynamicAtEnd.length || writerDynamicAtEnd.length) {
-    const where = dynamicAtEnd.length
-      ? `${dynamicAtEnd[0].location}${dynamicAtEnd[0].lineNumber ? ` line ${dynamicAtEnd[0].lineNumber}` : ""}`
-      : "a Channel Writer with a template target";
-    return {
-      channelName: "determined at run time",
-      targetKey: `runtime:${endId}`,
-      hopKind: "runtime",
-      reason: `The trail ends at ${endName}: it routes to a target it builds at run time (${where}), so the routing map cannot say which channel this message went to, and the forward scan only looks at channels the map knows about. If it was routed with router.routeMessage the source map did not travel with it either, so nothing downstream can be linked back to it.`,
-    };
-  }
-  return null;
-}
-
-/** Reconstructs the real branch/merge tree from the flat ancestors/
-    descendants lists the API returns. `degraded` is true when the server
-    has not yet been updated to send parentChannelId/parentMessageId, in
-    which case descendants are laid out in the old single-file order so the
-    view still works, and the caller should say why it looks that way. */
-function buildTraceGraph(traceResult, mfData, codeIndex) {
-  const transportById = {};
-  (mfData && mfData.nodes || []).forEach((n) => { transportById[n.id] = n.sourceTransport; });
-
-  const root = {
-    channelId: traceResult.channelId, channelName: traceResult.channelName,
-    messageId: traceResult.messageId, hop: 0, isRoot: true, children: [],
-  };
-  root.key = nodeKey(root.channelId, root.messageId);
-  root.sourceTransport = transportById[root.channelId];
-
-  const ancestors = (traceResult.ancestors || []).map((n) => ({ ...n, sourceTransport: transportById[n.channelId] }));
-
-  const rawDescendants = traceResult.descendants || [];
-  const degraded = rawDescendants.length > 0 && rawDescendants.every((d) => d.parentChannelId == null);
-
-  const byKey = new Map([[root.key, root]]);
-  rawDescendants.forEach((raw) => {
-    const n = { ...raw, sourceTransport: transportById[raw.channelId], children: [] };
-    n.key = nodeKey(n.channelId, n.messageId);
-    byKey.set(n.key, n);
-  });
-
-  const orphans = [];
-  if (degraded) {
-    // No lineage to reconstruct from -- keep the previous behaviour (one
-    // file, in scan order) rather than inventing structure that isn't there.
-    let prev = root;
-    rawDescendants.forEach((raw) => {
-      const n = byKey.get(nodeKey(raw.channelId, raw.messageId));
-      prev.children.push(n);
-      prev = n;
-    });
-  } else {
-    rawDescendants.forEach((raw) => {
-      const n = byKey.get(nodeKey(raw.channelId, raw.messageId));
-      const parent = byKey.get(`${raw.parentChannelId}::${raw.parentMessageId}`);
-      if (parent) parent.children.push(n);
-      else orphans.push(n); // parent fell outside the scan window (truncated) -- real, just not placeable
-    });
-  }
-
-  const leaves = [];
-  (function collectLeaves(n) {
-    if (n.children.length) n.children.forEach(collectLeaves);
-    else leaves.push(n);
-  })(root);
-
-  // Branches that end for a documented reason and share the same target are
-  // drawn as one merged node with several incoming edges, rather than
-  // repeating the same "?" once per branch.
-  const continuationGroups = new Map();
-  leaves.forEach((leaf) => {
-    const c = computeContinuation(leaf, mfData, codeIndex, transportById);
-    if (!c) return;
-    const g = continuationGroups.get(c.targetKey) || { ...c, parents: [] };
-    g.parents.push(leaf);
-    continuationGroups.set(c.targetKey, g);
-  });
-  const continuations = [...continuationGroups.values()].map((g) => {
-    const node = {
-      channelName: g.channelName, unconfirmed: true, hop: Math.max(...g.parents.map((p) => p.hop)) + 1,
-      hopKind: g.hopKind, subtitleText: g.subtitleText, sourceTransport: g.sourceTransport,
-      reason: g.parents.length > 1
-        ? `${g.reason} (${g.parents.length} branches route here: ${g.parents.map((p) => p.channelName || p.channelId).join(", ")}.)`
-        : g.reason,
-      mergedFrom: g.parents.length > 1 ? g.parents.length : 0,
-      mergeParents: g.parents, // used once, after layout, to place this node between its branches
-      children: [], key: `cont::${g.targetKey}`,
-    };
-    g.parents.forEach((p) => p.children.push(node));
-    return node;
-  });
-
-  // Lane layout: leaves get sequential lanes; every parent centres over its
-  // own children. Ancestors and the root sit on the root's lane, since that
-  // side of the picture is never anything but one line.
-  let nextLane = 0;
-  /* A merge node has more than one parent, so it cannot be laned as an
-     ordinary child: whichever branch's post-order pass reaches it first
-     would set its lane, and every other branch feeding it would then
-     average toward that same lane and collapse onto it. Each branch gets
-     its own fresh row up to the merge; the merge node itself is placed
-     afterward, once every branch that feeds it has a real row. */
-  function laneForChild(child) {
-    if (child.mergeParents) return nextLane++;
-    return assignLane(child);
-  }
-  function assignLane(n) {
-    if (n.lane !== undefined) return n.lane;
-    if (!n.children.length) { n.lane = nextLane++; return n.lane; }
-    const lanes = n.children.map(laneForChild);
-    n.lane = lanes.reduce((a, b) => a + b, 0) / lanes.length;
-    return n.lane;
-  }
-  assignLane(root);
-  ancestors.forEach((a) => { a.lane = root.lane; });
-  orphans.forEach((o) => { o.lane = nextLane++; });
-  continuations.forEach((c) => {
-    c.lane = c.mergeParents.reduce((sum, p) => sum + p.lane, 0) / c.mergeParents.length;
-  });
-
-  return { root, ancestors, leaves, continuations, orphans, degraded };
-}
-
-/** Renders a reconstructed trace graph (see buildTraceGraph) as branching
-    cards and curves, the same visual language the routing map uses above
-    it, so the two pictures of the same engine agree. */
-function renderTraceGraphSvg(wrap, ui, graph, onSelectChannel) {
+function renderTraceChainSvg(wrap, ui, chain, currentIndex, onSelectChannel) {
   ensureDefs();
-  if (!wrap) return;
-  const { root, ancestors, orphans } = graph;
+  if (!wrap || !chain.length) {
+    wrap.innerHTML = "";
+    return;
+  }
 
-  // A merge node is reachable from more than one parent; collect it once for
-  // the card even though the edge walk below still draws one line per parent.
-  const seen = new Set();
-  const allNodes = [];
-  const pushOnce = (n) => { if (!seen.has(n)) { seen.add(n); allNodes.push(n); } };
-  ancestors.forEach(pushOnce);
-  pushOnce(root);
-  (function walk(n) { n.children.forEach(pushOnce); n.children.forEach(walk); })(root);
-  orphans.forEach(pushOnce);
+  let omitted = 0;
+  if (chain.length > MAX_RENDERED_HOPS) {
+    // Keep a window around the traced message: its immediate neighbours are
+    // what the reader came for.
+    const half = Math.floor(MAX_RENDERED_HOPS / 2);
+    const start = Math.min(Math.max(0, currentIndex - half), chain.length - MAX_RENDERED_HOPS);
+    omitted = chain.length - MAX_RENDERED_HOPS;
+    chain = chain.slice(start, start + MAX_RENDERED_HOPS);
+    currentIndex -= start;
+  }
 
-  if (!allNodes.length) { wrap.innerHTML = ""; return; }
-
-  const CARD_H = 46, GAP_X = 58, GAP_Y = 20, TOP = 26, LEFT = 20;
+  /* Cards and curves, the same as the routing map. The chain used to be drawn
+     as glossy circles with a caption parked underneath, which is the shape the
+     map moved away from, and it left the two pictures of the same engine
+     looking like they came from different tools. */
+  const CARD_H = 46, GAP_X = 58, TOP = 26;
   const cardOf = (n) => {
     const name = String(n.channelName || n.channelId || "");
     const sub = subtitleFor(n);
     return estimateLabelWidth(Math.max(name.length * 7.3, sub.length * 5.95) + 36);
   };
-
-  // One column per distinct hop value, ordered left to right, so a gap in
-  // hop numbers (e.g. a truncated branch) doesn't leave a blank column.
-  const hops = [...new Set(allNodes.map((n) => n.hop))].sort((a, b) => a - b);
-  const colIndex = new Map(hops.map((h, i) => [h, i]));
-  const colWidth = hops.map((h) => Math.max(...allNodes.filter((n) => n.hop === h).map(cardOf)));
-  const colX = [];
-  let cursor = LEFT;
-  colWidth.forEach((w) => { colX.push(cursor); cursor += w + GAP_X; });
+  const widths = chain.map(cardOf);
+  const xs = [];
+  let cursor = 20;
+  widths.forEach((w) => { xs.push(cursor); cursor += w + GAP_X; });
   const width = cursor + 4;
+  const height = TOP + CARD_H + 34;
+  const midY = TOP + CARD_H / 2;
 
-  const maxLane = Math.max(0, ...allNodes.map((n) => n.lane));
-  const rowH = CARD_H + GAP_Y;
-  const height = TOP + (maxLane + 1) * rowH + 10;
+  /* A hop the trace could not follow is the whole reason the node after it is
+     drawn, so the line carries the same colour and dash the routing map gives
+     that route, and the reason hangs off a question mark on the node. */
+  const lineEls = chain.slice(0, -1).map((n, i) => {
+    const next = chain[i + 1];
+    const hop = next && next.unconfirmed ? (HOP_STYLE[next.hop] || HOP_STYLE.untraceable) : null;
+    const x1 = xs[i] + widths[i];
+    const x2 = xs[i + 1] - 9;
+    return `<line x1="${x1}" y1="${midY}" x2="${x2}" y2="${midY}" stroke="${hop ? hop.stroke : "var(--violet)"}"
+      stroke-width="1.8" stroke-linecap="round" ${hop ? hop.dash : ""}
+      marker-end="url(#${hop ? hop.marker : "mfArrowWriter"})"/>`;
+  }).join("");
 
-  const xOf = (n) => colX[colIndex.get(n.hop)];
-  const wOf = (n) => colWidth[colIndex.get(n.hop)];
-  const yOf = (n) => TOP + n.lane * rowH;
-
-  const curve = (x1, y1, x2, y2, stroke, dash, marker) => {
-    const mx = (x1 + x2) / 2;
-    return `<path d="M${x1},${y1} C${mx},${y1} ${mx},${y2} ${x2},${y2}" fill="none"
-      stroke="${stroke}" stroke-width="1.8" stroke-linecap="round" ${dash || ""}
-      marker-end="url(#${marker})"/>`;
-  };
-
-  const edgeEls = [];
-  for (let i = 0; i < ancestors.length; i++) {
-    const a = ancestors[i], b = i + 1 < ancestors.length ? ancestors[i + 1] : root;
-    edgeEls.push(curve(xOf(a) + wOf(a), yOf(a) + CARD_H / 2, xOf(b), yOf(b) + CARD_H / 2, "var(--violet)", "", "mfArrowWriter"));
-  }
-  (function walkEdges(n) {
-    n.children.forEach((c) => {
-      const style = c.unconfirmed ? (HOP_STYLE[c.hopKind] || HOP_STYLE.untraceable) : null;
-      edgeEls.push(curve(
-        xOf(n) + wOf(n), yOf(n) + CARD_H / 2, xOf(c), yOf(c) + CARD_H / 2,
-        style ? style.stroke : "var(--violet)", style ? style.dash : "", style ? style.marker : "mfArrowWriter",
-      ));
-    });
-    n.children.forEach(walkEdges);
-  })(root);
-
-  const nodeEls = allNodes.map((n) => {
-    const isCurrent = n.isRoot;
+  const nodeEls = chain.map((n, i) => {
+    const isCurrent = i === currentIndex;
     const known = !n.unconfirmed && !n.notFound && !n.lookupError && !n.restricted;
-    const w = wOf(n), x = xOf(n), y = yOf(n);
+    const w = widths[i];
     const stripe = isCurrent ? "#d4a656" : known ? "#6f8fd9" : "var(--text-faint)";
     const border = isCurrent ? "#e8c874" : known ? "#2e3b4d" : "var(--text-faint)";
     const fill = isCurrent ? "#1a2230" : known ? "#161d28" : "var(--bg3)";
     const textColor = isCurrent ? "#f0dca8" : known ? "#cfe0f8" : "var(--text-faint)";
-    const hopStyle = HOP_STYLE[n.hopKind] || HOP_STYLE.untraceable;
+    const hopStyle = HOP_STYLE[n.hop] || HOP_STYLE.untraceable;
+    /* The reason a node is unconfirmed is too long for the card, so it hangs off
+       a question mark. An SVG <title>, the same affordance the routing lines
+       use, which needs no positioning of its own. */
     const whyBadge = n.unconfirmed && n.reason
       ? `<g transform="translate(${w - 11},-9)" style="cursor:help">
            <title>${esc(n.reason)}</title>
@@ -1768,16 +1561,13 @@ function renderTraceGraphSvg(wrap, ui, graph, onSelectChannel) {
            <text text-anchor="middle" y="3.4" font-size="11" font-weight="700" fill="${hopStyle.stroke}" style="font-family:var(--font-ui,inherit)">?</text>
          </g>`
       : "";
-    const mergeBadge = n.mergedFrom
-      ? `<g transform="translate(${w - (n.unconfirmed ? 30 : 11)},-9)" style="cursor:help">
-           <title>Merged from ${n.mergedFrom} branches.</title>
-           <circle r="8.5" fill="#151c26" stroke="var(--text-dim)" stroke-width="1.2"/>
-           <text text-anchor="middle" y="3.4" font-size="9.5" font-weight="700" fill="var(--text-dim)" style="font-family:var(--font-ui,inherit)">${n.mergedFrom}</text>
-         </g>`
-      : "";
+    /* A channel in a trace is somewhere to go, which it never was: the chain had
+       no click handling at all, so a reader who traced a message and wanted the
+       channel it landed in had to go and find it in a table. Both actions the
+       tables offer are here now. */
     const clickable = known && n.channelId;
     return `<g class="mf-node${clickable ? " mf-node-click" : ""}"
-      ${clickable ? `data-select-channel="${esc(n.channelId)}"` : ""} transform="translate(${x},${y})">
+      ${clickable ? `data-select-channel="${esc(n.channelId)}"` : ""} transform="translate(${xs[i]},${TOP})">
       <rect width="${w}" height="${CARD_H}" rx="9" fill="${fill}" stroke="${border}" stroke-width="1.2" ${known ? "" : 'stroke-dasharray="4,3"'}/>
       <rect width="4" height="${CARD_H}" rx="2" fill="${stripe}"/>
       <foreignObject x="14" y="6" width="${Math.max(40, w - (clickable ? 44 : 20))}" height="36" style="pointer-events:none">
@@ -1790,12 +1580,12 @@ function renderTraceGraphSvg(wrap, ui, graph, onSelectChannel) {
         <rect width="29" height="15" rx="4" fill="#0f151d" stroke="var(--line-strong)" stroke-width="1"/>
         <text x="14.5" y="11" text-anchor="middle" font-size="9.5" fill="var(--text-dim)" font-family="var(--font-ui,inherit)">edit</text>
       </g>` : ""}
-      ${whyBadge}${mergeBadge}
+      ${whyBadge}
     </g>`;
   }).join("");
 
   wrap.innerHTML = `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
-    <g class="mf-edges">${edgeEls.join("")}</g>
+    <g class="mf-edges">${lineEls}</g>
     <g class="mf-nodes">${nodeEls}</g>
   </svg>`;
 
@@ -1807,6 +1597,15 @@ function renderTraceGraphSvg(wrap, ui, graph, onSelectChannel) {
       });
     });
   }
+}
+
+/** What a chain node says about itself under its name. */
+function subtitleFor(n) {
+  if (n.unconfirmed) return n.subtitleText || "not confirmed";
+  if (n.restricted) return "not visible to you";
+  if (n.notFound) return "not found";
+  if (n.lookupError) return "lookup failed";
+  return `#${n.messageId} \u00b7 ${n.status || "\u2014"}`;
 }
 
 function register(platform2) {
@@ -1832,6 +1631,28 @@ function register(platform2) {
       ctx.platform.router.navigate(`${NAV_PATH}?channelId=${encodeURIComponent(channel.id)}`);
     },
   });
+
+  // Right-click a row in the message browser: open Message Flow with this
+  // message already traced. registerMessageAction exists from Web Support
+  // 1.2.x; on an older host it is absent, so feature-detect rather than throw
+  // and take the whole plugin down with it.
+  if (typeof platform2.registerMessageAction === "function") {
+    platform2.registerMessageAction({
+      id: "trace-in-message-flow",
+      label: "Trace in Message Flow",
+      icon: "link",
+      order: 60,
+      isEnabled(ctx) {
+        return !!(ctx && ctx.channelId && ctx.message && ctx.message.messageId != null);
+      },
+      onInvoke(message, ctx) {
+        ctx.platform.router.navigate(
+          `${NAV_PATH}?channelId=${encodeURIComponent(ctx.channelId)}` +
+          `&messageId=${encodeURIComponent(message.messageId)}&autoTrace=true`
+        );
+      },
+    });
+  }
 }
 
 /* ══════════════════════════════ Nav tab (own channel list) ══════════════ */
@@ -2212,62 +2033,116 @@ function linkifyNote(text, channels) {
       }
       if (!traceResult) { el.innerHTML = ""; return; }
 
-      /* Reconstructs the real tree (branches and merges) from the flat lists
-         the API returns, rather than assuming list order is chain order --
-         see buildTraceGraph for why that assumption was wrong. */
-      const graph = buildTraceGraph(traceResult, mfData, codeIndex);
-      let descendantCount = 0;
-      (function count(n) { n.children.forEach((c) => { if (!c.key.startsWith("cont::")) descendantCount++; count(c); }); })(graph.root);
+      const current = { channelId: traceResult.channelId, channelName: traceResult.channelName, messageId: traceResult.messageId };
+      const chain = [...traceResult.ancestors, current, ...traceResult.descendants];
+      const transportById = {};
+      (mfData && mfData.nodes || []).forEach((n) => { transportById[n.id] = n.sourceTransport; });
+      const enriched = chain.map((n) => ({ ...n, sourceTransport: transportById[n.channelId] }));
+
+      /* Why this particular trace stopped, asked of the channel the chain
+         actually ended at rather than the channel it was traced from. Those are
+         the same only when the scan moved nowhere, and gating all of this on
+         finding no descendants at all meant a trace that ran one hop and then
+         hit a route writing no source map simply stopped, with the reason drawn
+         in the routing map directly above it and never said here.
+
+         A channel whose routing target is computed cannot have its onward path
+         predicted from configuration at all, and saying so is more useful than
+         four maybes, because it tells the reader the map was never going to
+         answer this and the source map is the only thing that can. */
+      const endNode = chain[chain.length - 1];
+      const endId = endNode.channelId;
+      const endName = endNode.channelName || endId;
+      const dynamicAtEnd = unresolvableRoutes(codeIndex, endId);
+      const writerDynamicAtEnd = (mfData.externalDestinations || [])
+        .filter((d) => d.dynamicRouting && d.channelId === endId);
+      const untraceableAtEnd = mfData.edges
+        .filter((e) => e.fromId === endId && e.traceable === false);
+      /* A switched-off destination is the other reason a trail stops, and the
+         only one of them that is definite: nothing was dispatched, so there is
+         no downstream message that a trace failed to link. It is checked first
+         for that reason. A script route has no enable switch, so it is never
+         counted here and its presence means the routes onward are not all off. */
+      const onwardAtEnd = mfData.edges.filter((e) => e.fromId === endId);
+      const disabledAtEnd = onwardAtEnd.filter((e) => e.enabled === false);
+      const allOnwardDisabled = onwardAtEnd.length > 0
+        && disabledAtEnd.length === onwardAtEnd.length
+        && !dynamicAtEnd.length && !writerDynamicAtEnd.length;
+
+      /* What the routing map knows happens next, which the source map cannot
+         confirm. Drawn as an extra node so the picture stops looking like the
+         message simply stopped, and marked unconfirmed because that hop leaves
+         no record: this says the route exists, never that this message took
+         it. */
+      let continuation = null;
+      if (allOnwardDisabled) {
+        /* Each destination is named with the target it points at, rather than
+           listing destinations and targets as two separate runs of text. A
+           Channel Writer set to None has no target and is not an unresolvable
+           channel, which is what naming it by its missing toName claimed. */
+        const named = disabledAtEnd.filter((e) => e.toName);
+        continuation = {
+          channelName: named.length === 1 ? named[0].toName : `${disabledAtEnd.length} destinations`,
+          unconfirmed: true,
+          subtitleText: "route disabled",
+          hop: "disabled",
+          sourceTransport: named.length === 1 ? transportById[named[0].toId] : undefined,
+          reason: `The trail ends at ${endName}: ${disabledAtEnd.length === 1 ? "its only route onward is" : disabledAtEnd.length === 2 ? "both of its routes onward are" : `all ${disabledAtEnd.length} of its routes onward are`} disabled (${disabledAtEnd.map((e) => `${e.destinationId != null ? `Destination ${e.destinationId}: ` : ""}${e.destName} \u2192 ${routeTargetLabel(e)}`).join("; ")}). Nothing was dispatched from it, so there is no downstream message for a trace to find. This reads the channel as it is configured now, not as it was when the message ran.`,
+        };
+      } else if (untraceableAtEnd.length) {
+        const targets = untraceableAtEnd.map(routeTargetLabel);
+        const label = untraceableAtEnd.length === 1 ? targets[0] : `${untraceableAtEnd.length} channels`;
+        continuation = {
+          channelName: label,
+          unconfirmed: true,
+          hop: "untraceable",
+          sourceTransport: untraceableAtEnd.length === 1 ? transportById[untraceableAtEnd[0].toId] : undefined,
+          reason: `The trail ends at ${endName}: it routes to ${targets.join(", ")} with router.routeMessage, which does not send the source map to the downstream channel. Nothing there records that it came from this message, so the routing map knows the hop exists but no trace can confirm this message took it. Import the Route with Sources code template library and call routeMessage(...) without the router. prefix to close the gap.`,
+        };
+      } else if (dynamicAtEnd.length || writerDynamicAtEnd.length) {
+        const where = dynamicAtEnd.length
+          ? `${dynamicAtEnd[0].location}${dynamicAtEnd[0].lineNumber ? ` line ${dynamicAtEnd[0].lineNumber}` : ""}`
+          : "a Channel Writer with a template target";
+        continuation = {
+          channelName: "determined at run time",
+          unconfirmed: true,
+          hop: "runtime",
+          reason: `The trail ends at ${endName}: it routes to a target it builds at run time (${where}), so the routing map cannot say which channel this message went to, and the forward scan only looks at channels the map knows about. If it was routed with router.routeMessage the source map did not travel with it either, so nothing downstream can be linked back to it.`,
+        };
+      }
+      if (continuation) enriched.push(continuation);
 
       const notes = [];
-      if (graph.degraded) {
-        notes.push("This server has not yet been updated to record which specific message each descendant came from, so branches below are shown in scan order rather than their real shape. Rebuild and redeploy message-flow-server with the parentChannelId/parentMessageId patch to see actual branches and merges.");
-      }
-      if (graph.orphans.length) {
-        notes.push(`${graph.orphans.length} descendant${graph.orphans.length === 1 ? "" : "s"} could not be placed in the tree (its parent hop fell outside the scan window) and ${graph.orphans.length === 1 ? "is" : "are"} shown unattached.`);
-      }
-      // One reason per distinct dead end, not one per branch that hit it --
-      // continuations already merge branches sharing a target, so this just
-      // reads their reasons back out in the same de-duplicated form.
-      const seenReasons = new Set();
-      graph.continuations.forEach((c) => {
-        if (seenReasons.has(c.reason)) return;
-        seenReasons.add(c.reason);
-        notes.push(c.reason);
-      });
-      if (!graph.continuations.length && descendantCount === 0) {
+      if (continuation) {
+        notes.push(continuation.reason);
+      } else if (traceResult.descendants.length === 0) {
         notes.push("No descendants found. The message may not have been routed onward yet, a downstream message may have been pruned, or a downstream channel may not store maps.");
       }
       if (traceResult.ancestors.length === 0) {
         notes.push("No ancestors recorded. Either this is where the message entered the engine, or it arrived by a router.routeMessage call, which does not send the source map to the downstream channel unless it goes through the Route with Sources code template.");
       }
       if (traceResult.truncated) {
-        notes.push("The scan hit its ceiling, so this tree may be incomplete. Trace a message further along to see past this point.");
+        notes.push("The scan hit its ceiling, so this chain may be incomplete. Trace a message further along to see past this point.");
       }
       if (traceResult.scanErrors) {
         notes.push(`${traceResult.scanErrors} message lookup${traceResult.scanErrors === 1 ? "" : "s"} failed during the scan and were skipped.`);
       }
-      const totalNodesShown = graph.ancestors.length + 1 + descendantCount + graph.continuations.length;
-      if (totalNodesShown > MAX_RENDERED_HOPS) {
-        // The old chain view windowed itself around the traced message when a
-        // trace ran long. Windowing a branching tree needs to decide which
-        // whole branches to drop, not just which hops -- worth its own pass
-        // rather than folding in here; for now this says the picture may be
-        // large rather than silently narrowing it.
-        notes.push(`${totalNodesShown} nodes in this tree. A trace this wide or deep usually means a fan-out with many destinations, or a loop -- scroll the graph horizontally if it runs past the edge.`);
+      const totalHops = traceResult.ancestors.length + 1 + traceResult.descendants.length;
+      if (totalHops > MAX_RENDERED_HOPS) {
+        notes.push(`${totalHops} hops in this chain; showing the ${MAX_RENDERED_HOPS} around the traced message. A chain this long usually means the message is routing in a loop.`);
       }
       const note = notes.length
         ? `<div class="mf-section-note" style="margin-top:6px">${notes.map((t) => linkifyNote(t, mfData.nodes)).join("<br>")}</div>`
         : "";
       el.innerHTML = `<div class="mf-graph" id="mfTraceGraph" style="margin-top:10px;margin-bottom:0"></div>${note}`;
-      const graphWrapEl = el.querySelector("#mfTraceGraph");
-      renderTraceGraphSvg(graphWrapEl, ui, graph, (id) => {
+      const chainWrap = el.querySelector("#mfTraceGraph");
+      renderTraceChainSvg(chainWrap, ui, enriched, traceResult.ancestors.length, (id) => {
         selected = id; traceResult = null; traceError = null;
         renderBar(); renderPane();
       });
-      // The graph's edit chips, and the channel names now linked in the notes
+      // The chain's edit chips, and the channel names now linked in the notes
       // beneath it, use the same wiring as every other channel name.
-      wireChannelLinks(graphWrapEl);
+      wireChannelLinks(chainWrap);
       wireChannelLinks(el);
     }
 
